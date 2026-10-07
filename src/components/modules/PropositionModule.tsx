@@ -4,6 +4,7 @@ import { useState, useCallback } from 'react'
 import { useMootStore } from '@/store/mootStore'
 import { Upload, FileText, CheckCircle, AlertTriangle, Loader2, ChevronDown, ChevronRight, Gavel, Scale, BookOpen } from 'lucide-react'
 import { deconstructProposition } from '@/lib/gemini'
+import { extractFileText, ACCEPT_ATTR } from '@/lib/fileExtract'
 
 type Stage = 'upload' | 'processing' | 'review' | 'applied'
 
@@ -11,7 +12,7 @@ export default function PropositionModule() {
   const { activeCase, setActiveModule } = useMootStore()
   const [stage, setStage] = useState<Stage>('upload')
   const [isDragging, setIsDragging] = useState(false)
-  const [uploadedFiles, setUploadedFiles] = useState<{name: string; type: string; size: string}[]>([])
+  const [uploadedFiles, setUploadedFiles] = useState<{name: string; type: string; size: string; text: string; status: 'reading' | 'ready' | 'error'}[]>([])
   const [deconstructed, setDeconstructed] = useState<Record<string, unknown> | null>(null)
   const [processing, setProcessing] = useState(false)
   const [expandedIssue, setExpandedIssue] = useState<number | null>(0)
@@ -24,21 +25,28 @@ export default function PropositionModule() {
     handleFiles(files)
   }, [])
 
-  const handleFiles = (files: File[]) => {
-    const mapped = files.map(f => ({
-      name: f.name,
-      type: f.name.endsWith('.pdf') ? 'PDF' : f.name.endsWith('.docx') ? 'DOCX' : 'TXT',
-      size: `${(f.size / 1024).toFixed(0)} KB`
-    }))
-    setUploadedFiles(prev => [...prev, ...mapped])
+  const handleFiles = async (files: File[]) => {
+    setError(null)
+    for (const f of files) {
+      const base = { name: f.name, type: f.name.split('.').pop()?.toUpperCase() || 'FILE', size: `${(f.size / 1024).toFixed(0)} KB` }
+      setUploadedFiles(prev => [...prev, { ...base, text: '', status: 'reading' }])
+      try {
+        const { kind, text } = await extractFileText(f)
+        setUploadedFiles(prev => prev.map(x => x.name === f.name && x.status === 'reading' ? { ...x, type: kind, text, status: 'ready' } : x))
+      } catch (e) {
+        setUploadedFiles(prev => prev.map(x => x.name === f.name && x.status === 'reading' ? { ...x, status: 'error' } : x))
+        setError(e instanceof Error ? e.message : `Could not read ${f.name}`)
+      }
+    }
   }
 
   const handleDeconstruct = async () => {
     setProcessing(true)
     setError(null)
     try {
-      // Use active case proposition as demo text
-      const text = activeCase?.proposition || 'Please upload a proposition document.'
+      // Use uploaded document text when available, otherwise fall back to the active case proposition
+      const uploadedText = uploadedFiles.filter(f => f.status === 'ready').map(f => `--- ${f.name} ---\n${f.text}`).join('\n\n')
+      const text = uploadedText || activeCase?.proposition || 'Please upload a proposition document.'
       const result = await deconstructProposition(text)
       setDeconstructed(result)
       setStage('review')
@@ -101,14 +109,14 @@ export default function PropositionModule() {
         }`}
         onClick={() => document.getElementById('file-input')?.click()}
       >
-        <input id="file-input" type="file" multiple className="hidden" accept=".pdf,.docx,.txt"
-          onChange={e => handleFiles(Array.from(e.target.files || []))} />
+        <input id="file-input" type="file" multiple className="hidden" accept={ACCEPT_ATTR}
+          onChange={e => { handleFiles(Array.from(e.target.files || [])); e.target.value = '' }} />
         <Upload className={`w-10 h-10 mx-auto mb-4 ${isDragging ? 'text-gold-400' : 'text-charcoal-600'}`} />
         <div className="text-base font-semibold text-ivory-200 mb-1">
           Drag & drop your moot documents here
         </div>
         <div className="text-sm text-charcoal-500">
-          Supports PDF, DOCX, TXT · Scanned documents are OCR-processed
+          Supports PDF, DOCX, TXT, PNG, JPG · Scanned documents and images are OCR-processed (max 3 MB for PDF/images)
         </div>
         <div className="mt-4 flex flex-wrap justify-center gap-2">
           {['Proposition', 'Brochure', 'Rules', 'Memorial Guidelines', 'Clarifications'].map(t => (
@@ -151,11 +159,13 @@ export default function PropositionModule() {
                 <span className="text-sm text-ivory-200 flex-1">{f.name}</span>
                 <span className="badge badge-gray">{f.type}</span>
                 <span className="text-xs text-charcoal-500">{f.size}</span>
-                <CheckCircle className="w-4 h-4 text-legal-green" />
+                {f.status === 'reading' ? <Loader2 className="w-4 h-4 animate-spin text-gold-400" />
+                  : f.status === 'error' ? <AlertTriangle className="w-4 h-4 text-legal-red" />
+                  : <CheckCircle className="w-4 h-4 text-legal-green" />}
               </div>
             ))}
           </div>
-          <button onClick={handleDeconstruct} disabled={processing}
+          <button onClick={handleDeconstruct} disabled={processing || uploadedFiles.some(f => f.status === 'reading') || !uploadedFiles.some(f => f.status === 'ready')}
             className="btn-primary w-full mt-4 justify-center">
             {processing ? <><Loader2 className="w-4 h-4 animate-spin" /> Analysing documents…</> : 'Deconstruct Brochure'}
           </button>

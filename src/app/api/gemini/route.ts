@@ -46,6 +46,44 @@ export async function POST(req: NextRequest) {
     const { action, payload } = body
 
     switch (action) {
+      case 'extractText': {
+        // Extract text from a PDF or image (OCR) using Gemini's multimodal input
+        if (!genai) throw new Error('API key not configured')
+        const { mimeType, data } = payload
+        let lastErr: any = null
+        for (const model of MODELS) {
+          try {
+            const response = await genai.models.generateContent({
+              model,
+              contents: [{
+                role: 'user',
+                parts: [
+                  { inlineData: { mimeType, data } },
+                  { text: 'Extract ALL text from this document verbatim, preserving headings, numbering and paragraph structure. Output only the extracted text, with no commentary.' },
+                ],
+              }],
+              config: { temperature: 0, maxOutputTokens: 16000 },
+            })
+            if (response?.text) return NextResponse.json({ text: response.text })
+          } catch (err: any) {
+            lastErr = err
+          }
+        }
+        throw lastErr || new Error('Could not extract text from file')
+      }
+
+      case 'briefJudgment': {
+        const { text } = payload
+        const prompt = `You are a Senior Advocate. Prepare a concise case brief of the following judgment for moot court use.
+Return JSON: {"name": string, "cite": string, "court": string, "year": number|null, "facts": string, "issues": string[], "holding": string, "ratio": string, "obiter": string}
+Use "Not stated" where information is absent. Do not invent citations.
+
+JUDGMENT TEXT:
+${String(text).slice(0, 60000)}`
+        const raw = await callGemini(prompt, true)
+        return NextResponse.json(JSON.parse(raw))
+      }
+
       case 'legalResearch': {
         const { query, caseContext } = payload
         const prompt = `You are a distinguished Senior Advocate and Constitutional Law scholar specializing in Indian Supreme Court jurisprudence and moot court competitions.

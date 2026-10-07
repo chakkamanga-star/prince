@@ -1,6 +1,8 @@
 'use client'
 import { useState } from 'react'
-import { Upload, FileText, CheckCircle, AlertTriangle, ChevronDown, ChevronRight, BookOpen, Scale, Gavel, Star } from 'lucide-react'
+import { Upload, FileText, CheckCircle, AlertTriangle, ChevronDown, ChevronRight, BookOpen, Scale, Gavel, Star, Loader2 } from 'lucide-react'
+import { extractFileText, ACCEPT_ATTR } from '@/lib/fileExtract'
+import { briefJudgment } from '@/lib/gemini'
 
 const SAMPLE_CASES = [
   { id: 'c1', name: 'L. Chandra Kumar v. Union of India', cite: '(1997) 3 SCC 261', court: 'Supreme Court of India', bench: 7, year: 1997, binding: true, ratioObiter: 'ratio', status: 'good', precedentialStrength: 95, argumentAlignment: 88, supports: 'petitioner', holding: 'Article 226 and 227 jurisdiction of High Courts is a part of basic structure. Administrative Tribunals are subject to judicial oversight.', ratio: 'Tribunals cannot exclude judicial review entirely; High Courts and Supreme Court retain supervisory jurisdiction as a basic structure feature.' },
@@ -11,6 +13,34 @@ const SAMPLE_CASES = [
 export default function CaseLawStudio() {
   const [expandedCase, setExpandedCase] = useState<string | null>('c1')
   const [activeTab, setActiveTab] = useState<'brief'|'compare'|'precedent'>('brief')
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const [uploadedBriefs, setUploadedBriefs] = useState<(Awaited<ReturnType<typeof briefJudgment>> & { file: string })[]>([])
+
+  const handleUpload = async (files: File[]) => {
+    setUploadError(null)
+    setUploading(true)
+    setActiveTab('brief')
+    for (const f of files) {
+      try {
+        const { text } = await extractFileText(f)
+        if (!text.trim()) throw new Error(`No readable text found in ${f.name}`)
+        const brief = await briefJudgment(text)
+        setUploadedBriefs(prev => [{ ...brief, file: f.name }, ...prev])
+      } catch (e) {
+        setUploadError(e instanceof Error ? e.message : `Could not process ${f.name}`)
+      }
+    }
+    setUploading(false)
+  }
+
+  const uploadButton = (cls: string) => (
+    <label className={`${cls} cursor-pointer ${uploading ? 'opacity-60 pointer-events-none' : ''}`}>
+      {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />} Upload Judgment
+      <input type="file" multiple className="hidden" accept={ACCEPT_ATTR}
+        onChange={e => { handleUpload(Array.from(e.target.files || [])); e.target.value = '' }} />
+    </label>
+  )
 
   const riskColors: Record<string, string> = { good: 'badge-green', distinguished: 'badge-amber', overruled: 'badge-red', doubted: 'badge-amber' }
 
@@ -21,7 +51,7 @@ export default function CaseLawStudio() {
           <h1 className="text-xl font-bold text-ivory-100">Case Law Brief Studio</h1>
           <p className="text-sm text-charcoal-400 mt-0.5">Upload and analyse judgments — extract ratio, holding, and precedential strength</p>
         </div>
-        <button className="btn-secondary"><Upload className="w-4 h-4" /> Upload Judgment</button>
+        {uploadButton('btn-secondary')}
       </div>
 
       <div className="flex gap-1 bg-[#13151c] border border-[#1e2130] rounded-lg p-1">
@@ -35,6 +65,23 @@ export default function CaseLawStudio() {
 
       {activeTab === 'brief' && (
         <div className="space-y-3">
+          {uploadError && <div className="alert-critical"><AlertTriangle className="w-4 h-4" />{uploadError}</div>}
+          {uploadedBriefs.map((b, i) => (
+            <div key={i} className="card border border-gold-600/30">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-bold text-ivory-100">{b.name}</span>
+                <span className="badge badge-gold text-2xs">Uploaded</span>
+                <span className="text-xs text-charcoal-500">{b.file}</span>
+              </div>
+              <div className="text-xs text-charcoal-400 mt-1">{b.cite} · {b.court}{b.year ? ` · ${b.year}` : ''}</div>
+              <div className="grid grid-cols-2 gap-4 mt-3">
+                <div><div className="text-2xs text-charcoal-500 uppercase tracking-wider mb-1">Facts</div><p className="text-sm text-ivory-300">{b.facts}</p></div>
+                <div><div className="text-2xs text-charcoal-500 uppercase tracking-wider mb-1">Issues</div><ul className="text-sm text-ivory-300 list-disc pl-4">{(b.issues || []).map((s, j) => <li key={j}>{s}</li>)}</ul></div>
+                <div><div className="text-2xs text-charcoal-500 uppercase tracking-wider mb-1">Holding</div><p className="text-sm text-ivory-300">{b.holding}</p></div>
+                <div><div className="text-2xs text-charcoal-500 uppercase tracking-wider mb-1">Ratio Decidendi</div><p className="text-sm text-ivory-300">{b.ratio}</p></div>
+              </div>
+            </div>
+          ))}
           {SAMPLE_CASES.map(c => (
             <div key={c.id} className="card border border-[#2a2e40]">
               <button onClick={() => setExpandedCase(expandedCase === c.id ? null : c.id)} className="w-full flex items-start gap-4 text-left">
@@ -136,7 +183,7 @@ export default function CaseLawStudio() {
           <Gavel className="w-10 h-10 text-charcoal-600 mx-auto mb-3" />
           <div className="text-sm font-semibold text-ivory-200">Precedent Matrix</div>
           <div className="text-xs text-charcoal-500 mt-1 max-w-xs mx-auto">Upload more judgments to generate a visual precedent relationship graph showing followed, distinguished, overruled, and approved connections.</div>
-          <button className="btn-secondary mt-4"><Upload className="w-4 h-4" /> Upload Judgment</button>
+          {uploadButton('btn-secondary mt-4')}
         </div>
       )}
     </div>

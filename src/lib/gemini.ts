@@ -21,6 +21,20 @@ async function callGeminiApi<T>(action: string, payload: any): Promise<T> {
   return res.json()
 }
 
+// ── File text extraction (PDF / image OCR) ─────────────────────────────────
+export async function extractTextFromBinary(mimeType: string, data: string): Promise<string> {
+  const res = await callGeminiApi<{ text: string }>('extractText', { mimeType, data })
+  return res.text
+}
+
+// ── Brief an uploaded judgment ───────────────────────────────────────────────
+export async function briefJudgment(text: string) {
+  return callGeminiApi<{
+    name: string; cite: string; court: string; year: number | null
+    facts: string; issues: string[]; holding: string; ratio: string; obiter: string
+  }>('briefJudgment', { text })
+}
+
 // ── Legal Research ────────────────────────────────────────────────────────
 export async function legalResearch(query: string, caseContext?: string) {
   const data = await callGeminiApi<{ text: string; sources?: Array<{ uri: string; title: string }> }>(
