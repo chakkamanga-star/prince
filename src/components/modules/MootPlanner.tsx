@@ -1,0 +1,106 @@
+'use client'
+import { useState } from 'react'
+import { useMootStore } from '@/store/mootStore'
+import { Calendar, Loader2, CheckCircle, Clock, Zap } from 'lucide-react'
+import { generatePreparationSchedule } from '@/lib/gemini'
+
+const DEMO_SCHEDULE = [
+  { week: 1, theme: 'Foundation & Research', days: [
+    { day: 'Mon', tasks: [{ time: '09:00', dur: 60, type: 'research', title: 'Read proposition thoroughly — annotate all facts' }, { time: '10:00', dur: 90, type: 'research', title: 'Research Issue I: Article 32 & alternative remedy cases' }, { time: '14:00', dur: 60, type: 'memorial', title: 'Draft Statement of Facts' }] },
+    { day: 'Tue', tasks: [{ time: '09:00', dur: 90, type: 'research', title: 'Research Issue II: Article 21 and natural justice' }, { time: '11:00', dur: 45, type: 'oral', title: '5-min Bench Drill — Maintainability' }, { time: '14:00', dur: 60, type: 'memorial', title: 'Draft Statement of Jurisdiction' }] },
+    { day: 'Wed', tasks: [{ time: '09:00', dur: 120, type: 'research', title: 'Research Issue III: Basic structure and Art. 19(6)' }, { time: '14:00', dur: 60, type: 'memorial', title: 'Draft Issues Raised and Summary' }] },
+    { day: 'Thu', tasks: [{ time: '09:00', dur: 90, type: 'memorial', title: 'Begin Arguments Advanced — Issue I' }, { time: '14:00', dur: 45, type: 'oral', title: 'BenchSimulator — Issue I (Difficulty 2)' }] },
+    { day: 'Fri', tasks: [{ time: '09:00', dur: 90, type: 'memorial', title: 'Continue Arguments — Issue II' }, { time: '14:00', dur: 60, type: 'citation', title: 'Citation audit — all Issue I authorities' }] },
+  ]},
+  { week: 2, theme: 'Memorial & Authorities', days: [
+    { day: 'Mon', tasks: [{ time: '09:00', dur: 120, type: 'memorial', title: 'Arguments Advanced — Issue III' }, { time: '14:00', dur: 60, type: 'research', title: 'Find missing authorities for Issue II' }] },
+    { day: 'Tue', tasks: [{ time: '09:00', dur: 90, type: 'memorial', title: 'Refine all arguments — bench attack review' }, { time: '14:00', dur: 60, type: 'oral', title: 'BenchSimulator — Issue II (Difficulty 3)' }] },
+  ]},
+]
+
+export default function MootPlanner() {
+  const { activeCase } = useMootStore()
+  const [schedule, setSchedule] = useState(DEMO_SCHEDULE)
+  const [generating, setGenerating] = useState(false)
+  const [generated, setGenerated] = useState(false)
+
+  const handleGenerate = async () => {
+    setGenerating(true)
+    try {
+      await generatePreparationSchedule({
+        daysRemaining: activeCase?.daysRemaining || 47,
+        memorialDeadline: activeCase?.memorialDeadline || '',
+        oralDate: activeCase?.oralRoundDate || '',
+        currentScores: { memorial: 38, research: 55, oral: 29 },
+        issues: activeCase?.issues.map(i => i.title) || []
+      })
+      setGenerated(true)
+    } catch {}
+    setGenerating(false)
+  }
+
+  const typeColors: Record<string, string> = {
+    research: 'bg-navy-700/50 border-navy-600/40 text-navy-200',
+    memorial: 'bg-gold-500/10 border-gold-500/30 text-gold-200',
+    oral: 'bg-legal-green/10 border-legal-green/30 text-green-200',
+    citation: 'bg-legal-red/10 border-legal-red/30 text-red-200',
+    drill: 'bg-purple-500/10 border-purple-500/30 text-purple-200',
+  }
+
+  return (
+    <div className="max-w-5xl space-y-5">
+      <div className="flex items-center justify-between">
+        <div><h1 className="text-xl font-bold text-ivory-100">Moot Date Planner</h1>
+          <p className="text-sm text-charcoal-400 mt-0.5">Adaptive preparation schedule based on competition dates and performance</p></div>
+        <button onClick={handleGenerate} disabled={generating} className="btn-primary">
+          {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+          {generated ? 'Regenerate Schedule' : 'Generate Preparation Schedule'}
+        </button>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-4 gap-3">
+        {[
+          { label: 'Days Remaining', value: activeCase?.daysRemaining || 47, color: 'text-gold-400' },
+          { label: 'Memorial Deadline', value: '1 Feb 2025', color: 'text-ivory-200' },
+          { label: 'Oral Rounds', value: '15 Mar 2025', color: 'text-ivory-200' },
+          { label: 'Current Phase', value: 'Research', color: 'text-legal-green' },
+        ].map(s => (
+          <div key={s.label} className="card">
+            <div className="text-2xs text-charcoal-500 uppercase tracking-wider">{s.label}</div>
+            <div className={`text-base font-bold mt-1 ${s.color}`}>{s.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Weekly schedule */}
+      <div className="space-y-5">
+        {schedule.map(week => (
+          <div key={week.week} className="card">
+            <div className="flex items-center gap-3 mb-4">
+              <Calendar className="w-4 h-4 text-gold-400" />
+              <h3 className="section-title">Week {week.week} — {week.theme}</h3>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
+              {week.days.map(day => (
+                <div key={day.day} className="bg-[#1a1c22] border border-[#2a2e40] rounded-lg p-3">
+                  <div className="text-xs font-bold text-charcoal-400 uppercase tracking-wider mb-2">{day.day}</div>
+                  <div className="space-y-2">
+                    {day.tasks.map((task, i) => (
+                      <div key={i} className={`p-2 rounded-md border text-xs leading-snug ${typeColors[task.type] || typeColors.research}`}>
+                        <div className="flex items-center gap-1 mb-0.5 opacity-60">
+                          <Clock className="w-3 h-3" />{task.time} · {task.dur}m
+                        </div>
+                        {task.title}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
