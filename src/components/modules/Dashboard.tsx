@@ -47,22 +47,64 @@ function ScoreBar({ label, score, color }: { label: string; score: number; color
   )
 }
 
+import { useEffect, useState } from 'react'
+
 export default function Dashboard() {
-  const { activeCase, readinessBreakdown, alerts, dismissAlert, setActiveModule } = useMootStore()
+  const { activeCase, alerts, dismissAlert, setActiveModule } = useMootStore()
+  const [sessionCount, setSessionCount] = useState(0)
+  const [avgScore, setAvgScore] = useState(0)
+  const [citationStats, setCitationStats] = useState({ total: 0, verified: 0 })
+  const [memorialWordCount, setMemorialWordCount] = useState(0)
+
+  useEffect(() => {
+    try {
+      const s = localStorage.getItem('moot-sessions')
+      if (s) {
+        const parsed = JSON.parse(s)
+        setSessionCount(parsed.length)
+        if (parsed.length > 0) {
+          const sum = parsed.reduce((acc: number, cur: any) => acc + (cur.overallScore || 0), 0)
+          setAvgScore(Math.round(sum / parsed.length))
+        }
+      }
+
+      const c = localStorage.getItem('citations')
+      if (c) {
+        const parsed = JSON.parse(c)
+        setCitationStats({
+          total: parsed.length,
+          verified: parsed.filter((item: any) => item.status === 'VERIFIED').length
+        })
+      }
+
+      const m = localStorage.getItem('memorial-sections')
+      if (m) {
+        const parsed = JSON.parse(m)
+        const total = Object.values(parsed).reduce((acc: number, text: any) => {
+          return acc + (typeof text === 'string' && text.trim() ? text.trim().split(/\s+/).filter(Boolean).length : 0)
+        }, 0)
+        setMemorialWordCount(total)
+      }
+    } catch {}
+  }, [])
 
   if (!activeCase) return null
 
+  // Dynamic readiness calculations
+  const memorialScore = Math.min(100, Math.round((memorialWordCount / (activeCase.rules?.memorialWordLimit || 6000)) * 100))
+  const oralAdvocacyScore = sessionCount > 0 ? avgScore : 35
+  const citationScore = citationStats.total > 0 ? Math.round((citationStats.verified / citationStats.total) * 100) : 40
+  const overallReadiness = Math.round((memorialScore * 0.35) + (oralAdvocacyScore * 0.4) + (citationScore * 0.25))
+
   const scoreItems = [
-    { label: 'Memorial', score: readinessBreakdown.memorial, color: '#d4a843' },
-    { label: 'Legal Research', score: readinessBreakdown.legalResearch, color: '#5c64f4' },
-    { label: 'Authorities', score: readinessBreakdown.authorities, color: '#1a6b47' },
-    { label: 'Jurisdiction', score: readinessBreakdown.jurisdiction, color: '#5c64f4' },
-    { label: 'Maintainability', score: readinessBreakdown.maintainability, color: '#d4a843' },
-    { label: 'Facts', score: readinessBreakdown.facts, color: '#1a6b47' },
-    { label: 'Oral Advocacy', score: readinessBreakdown.oralAdvocacy, color: '#c0392b' },
-    { label: 'Courtroom Lang.', score: readinessBreakdown.courtoomLanguage, color: '#b45309' },
-    { label: 'Time Management', score: readinessBreakdown.timeManagement, color: '#5c64f4' },
-    { label: 'Citation Integrity', score: readinessBreakdown.citationIntegrity, color: '#c0392b' },
+    { label: 'Memorial Drafting', score: Math.max(25, memorialScore), color: '#d4a843' },
+    { label: 'Oral Advocacy', score: Math.max(30, oralAdvocacyScore), color: '#c0392b' },
+    { label: 'Citation Integrity', score: Math.max(35, citationScore), color: '#1a6b47' },
+    { label: 'Jurisdiction & Art. 32', score: 82, color: '#5c64f4' },
+    { label: 'Maintainability', score: 68, color: '#d4a843' },
+    { label: 'Facts Ledger', score: 75, color: '#1a6b47' },
+    { label: 'Courtroom Language', score: Math.min(95, oralAdvocacyScore + 10), color: '#b45309' },
+    { label: 'Time Management', score: sessionCount > 0 ? 65 : 40, color: '#5c64f4' },
   ]
 
   const todayItems = [
@@ -239,7 +281,7 @@ export default function Dashboard() {
           <div className="card text-center">
             <div className="text-xs font-semibold text-charcoal-400 uppercase tracking-wider mb-3">Overall Readiness</div>
             <div className="flex justify-center mb-4">
-              <RadialScore score={activeCase.readinessScore} size={120} />
+              <RadialScore score={overallReadiness} size={120} />
             </div>
             <div className="space-y-2">
               {scoreItems.map(item => (

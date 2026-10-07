@@ -1,6 +1,8 @@
 'use client'
 import { useState } from 'react'
-import { Link2, CheckCircle, AlertTriangle, XCircle, AlertCircle, Loader2 } from 'lucide-react'
+import { Link2, CheckCircle, AlertTriangle, XCircle, AlertCircle, Loader2, Trash2 } from 'lucide-react'
+import { verifyCitation } from '@/lib/gemini'
+import { usePersistentState } from '@/lib/usePersistentState'
 
 type CitationStatus = 'VERIFIED' | 'PARTIALLY_VERIFIED' | 'SOURCE_CONFLICT' | 'MIS_CITATION' | 'POSSIBLE_HALLUCINATION' | 'OVERRULED' | 'PROPOSITION_NOT_SUPPORTED' | 'PENDING'
 
@@ -15,24 +17,52 @@ const RISK_MAP: Record<CitationStatus, { badge: string; icon: typeof CheckCircle
   'PENDING': { badge: 'badge-gray', icon: AlertTriangle, riskDot: 'risk-dot-yellow', label: 'Pending Verification' },
 }
 
-const SAMPLE_CITATIONS = [
-  { id: 'c1', raw: 'L. Chandra Kumar v. Union of India, (1997) 3 SCC 261', para: '¶ 78', proposition: 'Article 32 jurisdiction is part of basic structure', status: 'VERIFIED' as CitationStatus, notes: 'Citation confirmed. Ratio supports proposition directly. 7-judge bench.' },
-  { id: 'c2', raw: 'Whirlpool Corporation v. Registrar of Trade Marks, (1998) 8 SCC 1', para: '¶ 15', proposition: 'Alternative remedy does not bar writ jurisdiction', status: 'VERIFIED' as CitationStatus, notes: 'Confirmed. Ratio decidendi squarely on point.' },
-  { id: 'c3', raw: 'S.P. Sampath Kumar v. Union of India, (1987) 1 SCC 124', para: '¶ 42', proposition: 'Tribunals are an effective substitute for High Courts', status: 'OVERRULED' as CitationStatus, notes: 'Distinguished in L. Chandra Kumar. This proposition has been significantly qualified. Use with caution.' },
-  { id: 'c4', raw: 'Ramesh Prasad Singh v. State of Bihar, AIR 2006 SC 1..', para: 'Para 9', proposition: 'Natural justice applies to all adverse orders', status: 'PARTIALLY_VERIFIED' as CitationStatus, notes: 'Case exists but cited paragraph could not be independently confirmed. Verify against SCC report.' },
-  { id: 'c5', raw: 'Union of India v. Hari Prakash, (2022) 14 SCC 812', para: 'Para 31', proposition: 'National security exception is absolute', status: 'POSSIBLE_HALLUCINATION' as CitationStatus, notes: 'Unable to independently verify this authority. Do not rely on it until checked against SCC Online or official repository.' },
-]
+interface CitationItem { id: string; raw: string; para: string; proposition: string; status: CitationStatus; notes: string }
 
 export default function CitationAuditor() {
-  const [citations, setCitations] = useState(SAMPLE_CITATIONS)
+  const [citations, setCitations] = usePersistentState<CitationItem[]>('citations', [])
   const [input, setInput] = useState('')
+  const [proposition, setProposition] = useState('')
   const [checking, setChecking] = useState<string | null>(null)
+  const [adding, setAdding] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const runCheck = async (raw: string, prop: string): Promise<{ status: CitationStatus; notes: string }> => {
+    const r = await verifyCitation(raw, prop)
+    const status = (r.status in RISK_MAP ? r.status : 'PENDING') as CitationStatus
+    // AI alone can never fully verify a citation (see Citation Integrity Rule below)
+    return { status: status === 'VERIFIED' ? 'PARTIALLY_VERIFIED' : status, notes: r.notes + (r.correct_citation ? ` Suggested citation: ${r.correct_citation}.` : '') }
+  }
+
+  const handleAdd = async () => {
+    const raw = input.trim()
+    if (!raw) return
+    setAdding(true); setError(null)
+    try {
+      const res = await runCheck(raw, proposition.trim())
+      setCitations(prev => [{ id: crypto.randomUUID(), raw, para: '', proposition: proposition.trim(), ...res }, ...prev])
+      setInput(''); setProposition('')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Verification failed')
+    }
+    setAdding(false)
+  }
 
   const handleManualCheck = async (id: string) => {
-    setChecking(id)
-    await new Promise(r => setTimeout(r, 1800))
+    const c = citations.find(x => x.id === id)
+    if (!c) return
+    setChecking(id); setError(null)
+    try {
+      const res = await runCheck(c.raw, c.proposition)
+      setCitations(prev => prev.map(x => x.id === id ? { ...x, ...res } : x))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Re-check failed')
+    }
     setChecking(null)
   }
+
+  const markVerified = (id: string) => setCitations(prev => prev.map(x => x.id === id ? { ...x, status: 'VERIFIED', notes: x.notes + ' [Manually confirmed against a primary source by you.]' } : x))
+  const remove = (id: string) => setCitations(prev => prev.filter(x => x.id !== id))
 
   const verified = citations.filter(c => c.status === 'VERIFIED').length
   const issues = citations.filter(c => ['MIS_CITATION', 'POSSIBLE_HALLUCINATION', 'OVERRULED'].includes(c.status)).length
@@ -66,14 +96,23 @@ export default function CitationAuditor() {
       {/* Add citation */}
       <div className="card">
         <div className="text-sm font-medium text-ivory-200 mb-2">Add citation for verification:</div>
-        <div className="flex gap-2">
+        <div className="space-y-2">
           <input value={input} onChange={e => setInput(e.target.value)} placeholder="e.g. Kesavananda Bharati v. State of Kerala, (1973) 4 SCC 225"
-            className="input flex-1" />
-          <button className="btn-primary px-5" disabled={!input.trim()}>
-            <Link2 className="w-4 h-4" /> Verify
-          </button>
+            className="input w-full" />
+          <div className="flex gap-2">
+            <input value={proposition} onChange={e => setProposition(e.target.value)} placeholder="Proposition it is cited for (optional)"
+              className="input flex-1" />
+            <button onClick={handleAdd} className="btn-primary px-5" disabled={!input.trim() || adding}>
+              {adding ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />} Verify
+            </button>
+          </div>
         </div>
+        {error && <div className="alert-critical mt-3"><AlertTriangle className="w-4 h-4" />{error}</div>}
       </div>
+
+      {citations.length === 0 && (
+        <div className="card text-center py-10 text-sm text-charcoal-500">No citations yet. Add one above to have it audited.</div>
+      )}
 
       {/* Citation list */}
       <div className="space-y-3">
@@ -97,6 +136,10 @@ export default function CitationAuditor() {
                           {checking === c.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Re-check'}
                         </button>
                       )}
+                      {c.status !== 'VERIFIED' && (
+                        <button onClick={() => markVerified(c.id)} className="btn-ghost text-xs py-1 px-2" title="Confirm after checking a primary source">Mark verified</button>
+                      )}
+                      <button onClick={() => remove(c.id)} className="btn-ghost text-xs py-1 px-2" aria-label="Remove citation"><Trash2 className="w-3.5 h-3.5" /></button>
                     </div>
                   </div>
                   {c.proposition && <p className="text-xs text-charcoal-400 italic mb-2">Proposition: "{c.proposition}"</p>}

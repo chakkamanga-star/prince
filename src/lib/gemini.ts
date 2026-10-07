@@ -21,6 +21,30 @@ async function callGeminiApi<T>(action: string, payload: any): Promise<T> {
   return res.json()
 }
 
+export async function verifyCitation(citation: string, proposition?: string) {
+  return callGeminiApi<{ status: string; notes: string; correct_citation: string | null }>('verifyCitation', { citation, proposition })
+}
+
+export async function analyzeMaintainability(params: {
+  caseContext: string
+  petitionerPosition?: string
+  respondentPosition?: string
+}) {
+  return callGeminiApi<{
+    score: number
+    strongestPoint: string
+    weakestPoint: string
+    likelyBenchAttack: string
+    requiredAuthority: string
+    factors: Array<{ name: string; strength: number; status: 'strong' | 'weak'; note: string }>
+    benchAttacks: Array<{ q: string; difficulty: 'HIGH' | 'MEDIUM' | 'LOW' }>
+  }>('analyzeMaintainability', params)
+}
+
+export async function getHealth() {
+  return callGeminiApi<{ gemini: boolean }>('health', {})
+}
+
 // ── File text extraction (PDF / image OCR) ─────────────────────────────────
 export async function extractTextFromBinary(mimeType: string, data: string): Promise<string> {
   const res = await callGeminiApi<{ text: string }>('extractText', { mimeType, data })

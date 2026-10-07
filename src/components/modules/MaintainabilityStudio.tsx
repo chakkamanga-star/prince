@@ -3,6 +3,8 @@
 import { useState } from 'react'
 import { useMootStore } from '@/store/mootStore'
 import { Shield, AlertTriangle, CheckCircle, XCircle, Loader2, Gavel } from 'lucide-react'
+import { analyzeMaintainability } from '@/lib/gemini'
+import { usePersistentState } from '@/lib/usePersistentState'
 
 const MAINTAINABILITY_FACTORS = [
   'Jurisdiction', 'Locus Standi', 'Standing', 'Cause of Action',
@@ -11,34 +13,63 @@ const MAINTAINABILITY_FACTORS = [
   'Res Judicata', 'Ripeness', 'Mootness', 'Statutory Bars', 'Procedural Prerequisites',
 ]
 
-export default function MaintainabilityStudio() {
-  const { activeCase } = useMootStore()
-  const [loading, setLoading] = useState(false)
-  const [analyzed, setAnalyzed] = useState(false)
+interface MaintainabilityData {
+  score: number
+  strongestPoint: string
+  weakestPoint: string
+  likelyBenchAttack: string
+  requiredAuthority: string
+  factors: Array<{ name: string; strength: number; status: 'strong' | 'weak'; note: string }>
+  benchAttacks: Array<{ q: string; difficulty: 'HIGH' | 'MEDIUM' | 'LOW' }>
+}
 
-  const score = 68
-  const factors = [
+const DEFAULT_DATA: MaintainabilityData = {
+  score: 68,
+  strongestPoint: 'Locus standi clear — direct aggrievement',
+  weakestPoint: 'Alternative remedy under CAT not addressed',
+  likelyBenchAttack: '"Why not approach CAT first?"',
+  requiredAuthority: 'Exception to alternative remedy rule (Whirlpool / L. Chandra Kumar)',
+  factors: [
     { name: 'Jurisdiction under Article 32', strength: 82, status: 'strong', note: 'Direct fundamental rights violation — Article 32 jurisdiction established' },
     { name: 'Locus Standi', strength: 90, status: 'strong', note: 'Petitioner is directly aggrieved — clear standing' },
     { name: 'Alternative Remedy (CAT)', strength: 45, status: 'weak', note: 'CAT has jurisdiction — respondent will raise this objection' },
     { name: 'Limitation', strength: 78, status: 'strong', note: 'Petition filed within reasonable time of dismissal' },
     { name: 'Cause of Action', strength: 85, status: 'strong', note: 'Dismissal without hearing — clear cause of action' },
     { name: 'Res Judicata', strength: 95, status: 'strong', note: 'No prior proceedings — no res judicata concern' },
-  ]
-
-  const benchAttacks = [
+  ],
+  benchAttacks: [
     { q: 'Counsel, why should this Court entertain the petition when an alternative statutory remedy exists under the Administrative Tribunals Act?', difficulty: 'HIGH' },
     { q: 'Is the petitioner not bound to first exhaust the remedy before the Central Administrative Tribunal?', difficulty: 'HIGH' },
     { q: 'Where is your authority that Article 32 can be invoked when an efficacious alternative remedy exists?', difficulty: 'MEDIUM' },
   ]
+}
+
+export default function MaintainabilityStudio() {
+  const { activeCase } = useMootStore()
+  const [data, setData] = usePersistentState<MaintainabilityData>('maintainability-data', DEFAULT_DATA)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const handleAnalyze = async () => {
     setLoading(true)
-    await new Promise(r => setTimeout(r, 1800))
+    setError(null)
+    try {
+      const issue1 = activeCase?.issues[0]
+      const result = await analyzeMaintainability({
+        caseContext: `${activeCase?.name || ''}. ${activeCase?.proposition || ''}`,
+        petitionerPosition: issue1?.petitionerPosition,
+        respondentPosition: issue1?.respondentPosition
+      })
+      if (result && result.factors && result.factors.length > 0) {
+        setData(result)
+      }
+    } catch (e: any) {
+      setError(e.message || 'Maintainability analysis failed. Please try again.')
+    }
     setLoading(false)
-    setAnalyzed(true)
   }
 
+  const score = data.score
   const scoreColor = score >= 75 ? 'text-legal-green' : score >= 50 ? 'text-gold-400' : 'text-legal-red'
 
   return (
@@ -46,28 +77,35 @@ export default function MaintainabilityStudio() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-ivory-100">Maintainability Studio</h1>
-          <p className="text-sm text-charcoal-400 mt-0.5">Test jurisdiction, standing, and procedural prerequisites</p>
+          <p className="text-sm text-charcoal-400 mt-0.5">Test jurisdiction, standing, and procedural prerequisites with AI</p>
         </div>
         <button onClick={handleAnalyze} disabled={loading} className="btn-primary">
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Shield className="w-4 h-4" />}
-          {loading ? 'Analysing…' : 'Run Maintainability Analysis'}
+          {loading ? 'Analysing with AI…' : 'Run AI Maintainability Analysis'}
         </button>
       </div>
+
+      {error && (
+        <div className="alert-critical">
+          <AlertTriangle className="w-4 h-4" />
+          <span>{error}</span>
+        </div>
+      )}
 
       {/* Score */}
       <div className="grid grid-cols-3 gap-4">
         <div className="card-gold text-center col-span-1">
           <div className="text-2xs text-charcoal-400 uppercase tracking-wider mb-2">Maintainability Score</div>
           <div className={`text-5xl font-extrabold ${scoreColor} mb-1`}>{score}</div>
-          <div className="text-sm text-charcoal-400">/ 100 — Moderate</div>
-          <div className="mt-3 text-xs text-charcoal-500">Petitioner | Issue I</div>
+          <div className="text-sm text-charcoal-400">/ 100 — {score >= 75 ? 'Strong' : score >= 50 ? 'Moderate' : 'Vulnerable'}</div>
+          <div className="mt-3 text-xs text-charcoal-500">{activeCase?.activeSide ? activeCase.activeSide.toUpperCase() : 'PETITIONER'} | Issue I</div>
         </div>
         <div className="col-span-2 grid grid-cols-2 gap-3">
           {[
-            { label: 'Strongest Point', value: 'Locus standi clear — direct aggrievement', icon: CheckCircle, color: 'text-legal-green' },
-            { label: 'Weakest Point', value: 'Alternative remedy under CAT not addressed', icon: XCircle, color: 'text-legal-red' },
-            { label: 'Likely Bench Attack', value: '"Why not approach CAT first?"', icon: Gavel, color: 'text-gold-400' },
-            { label: 'Required Authority', value: 'Exception to alternative remedy rule', icon: AlertTriangle, color: 'text-orange-400' },
+            { label: 'Strongest Point', value: data.strongestPoint, icon: CheckCircle, color: 'text-legal-green' },
+            { label: 'Weakest Point', value: data.weakestPoint, icon: XCircle, color: 'text-legal-red' },
+            { label: 'Likely Bench Attack', value: data.likelyBenchAttack, icon: Gavel, color: 'text-gold-400' },
+            { label: 'Required Authority', value: data.requiredAuthority, icon: AlertTriangle, color: 'text-orange-400' },
           ].map(item => {
             const Icon = item.icon
             return (
@@ -87,7 +125,7 @@ export default function MaintainabilityStudio() {
       <div className="card">
         <h3 className="section-title text-base mb-4">Jurisdictional Factor Analysis</h3>
         <div className="space-y-3">
-          {factors.map(f => (
+          {data.factors.map(f => (
             <div key={f.name} className="flex items-start gap-4 p-3 rounded-md bg-[#1a1c22] border border-[#2a2e40]">
               <div className="flex-shrink-0 w-8 mt-0.5">
                 {f.status === 'strong' ? <CheckCircle className="w-4 h-4 text-legal-green" /> : <XCircle className="w-4 h-4 text-legal-red" />}
@@ -112,7 +150,7 @@ export default function MaintainabilityStudio() {
       <div className="card">
         <h3 className="section-title text-base mb-4">Likely Bench Attacks on Maintainability</h3>
         <div className="space-y-3">
-          {benchAttacks.map((attack, i) => (
+          {data.benchAttacks.map((attack, i) => (
             <div key={i} className="p-4 rounded-lg bg-[#1a1508] border border-gold-600/20">
               <div className="flex items-start gap-3">
                 <Gavel className="w-4 h-4 text-gold-400 flex-shrink-0 mt-0.5" />

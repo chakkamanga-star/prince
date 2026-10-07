@@ -64,9 +64,14 @@ export default function ActiveCaseHeader() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-charcoal-500" />
           <input
             type="text"
-            placeholder="Ask your case anything…"
+            placeholder="Ask your case anything… (Press Enter to Research)"
             value={globalSearchQuery}
             onChange={e => setGlobalSearchQuery(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && globalSearchQuery.trim()) {
+                setActiveModule('legal-research')
+              }
+            }}
             className="w-full bg-[#1a1c22] border border-[#2a2e40] rounded-md pl-9 pr-3 py-1.5 text-xs text-ivory-200 placeholder-charcoal-500 focus:outline-none focus:border-gold-500/50 transition-colors"
           />
         </div>

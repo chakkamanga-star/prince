@@ -8,6 +8,8 @@ import {
   Settings, Gavel, User, BarChart2, X, CheckCircle, AlertCircle
 } from 'lucide-react'
 import { generateBenchQuestion, scoreCounselAnswer, generateSessionFeedback } from '@/lib/gemini'
+import { usePersistentState } from '@/lib/usePersistentState'
+import type { SessionRecord } from '@/lib/sessions'
 
 type SimPhase = 'config' | 'active' | 'paused' | 'completed'
 
@@ -108,16 +110,17 @@ export default function BenchSimulator() {
   const [currentQuestion, setCurrentQuestion] = useState<string | null>(null)
   const [sessionScore, setSessionScore] = useState(0)
   const [answersCount, setAnswersCount] = useState(0)
-  const [sidebarAlerts, setSidebarAlerts] = useState<string[]>([
-    'Establish jurisdictional foundation before substantive arguments.',
-    'Cite L. Chandra Kumar on Article 32 bar to alternative remedy.',
-    'Be prepared for: "Why not approach CAT first?"'
-  ])
+  const [sidebarAlerts, setSidebarAlerts] = useState<string[]>(() =>
+    (activeCase?.issues[0]?.subIssues || []).slice(0, 3).map(s => `Be prepared to address: ${s}`)
+  )
   const [extensionMode, setExtensionMode] = useState(false)
   const [feedbackLoading, setFeedbackLoading] = useState(false)
   const [sessionFeedback, setSessionFeedback] = useState<Record<string, unknown> | null>(null)
 
   const timerRef = useRef<NodeJS.Timeout | null>(null)
+  const feedbackRequested = useRef(false)
+  const sessionSaved = useRef(false)
+  const [, setSessions] = usePersistentState<SessionRecord[]>('moot-sessions', [])
   const transcriptRef = useRef<HTMLDivElement>(null)
 
   const currentIssue = activeCase?.issues.find(i => i.id === selectedIssue)
@@ -291,6 +294,29 @@ export default function BenchSimulator() {
     }
   }, [currentQuestion, currentIssue, activeCase, selectedSide, selectedArchetypes, difficulty, interruptionLevel, transcript, allocatedTime, timeRemaining, answersCount])
 
+  const requestFeedback = useCallback(async () => {
+    if (feedbackRequested.current) return
+    feedbackRequested.current = true
+    setFeedbackLoading(true)
+    try {
+      const qas = transcript.filter(e => e.speaker === 'counsel').map(e => ({
+        q: [...transcript].reverse().find(q => q.speaker === 'bench' && q.timestamp <= e.timestamp)?.text || '',
+        a: e.text,
+        score: e.score || 0
+      }))
+      if (qas.length > 0) {
+        const feedback = await generateSessionFeedback({
+          questions: qas,
+          totalScore: sessionScore,
+          issue: currentIssue?.title || '',
+          side: selectedSide
+        })
+        setSessionFeedback(feedback)
+      }
+    } catch {}
+    setFeedbackLoading(false)
+  }, [transcript, sessionScore, currentIssue, selectedSide])
+
   const endSimulation = useCallback(async () => {
     setIsRunning(false)
     setPhase('completed')
@@ -302,25 +328,48 @@ export default function BenchSimulator() {
       text: 'The Court thanks counsel. The submissions are concluded. The matter will be heard further.',
       timestamp: allocatedTime - timeRemaining
     }])
+    await requestFeedback()
+  }, [timeRemaining, allocatedTime, requestFeedback])
 
-    // Generate feedback
-    setFeedbackLoading(true)
-    try {
-      const qas = transcript.filter(e => e.speaker === 'counsel').map(e => ({
-        q: transcript.find(q => q.speaker === 'bench' && q.timestamp < e.timestamp)?.text || '',
-        a: e.text,
-        score: e.score || 50
-      }))
-      const feedback = await generateSessionFeedback({
-        questions: qas,
-        totalScore: sessionScore,
-        issue: currentIssue?.title || '',
-        side: selectedSide
-      })
-      setSessionFeedback(feedback)
-    } catch {}
-    setFeedbackLoading(false)
-  }, [transcript, timeRemaining, allocatedTime, sessionScore, currentIssue, selectedSide])
+  // Reset bookkeeping whenever a new round starts
+  useEffect(() => {
+    if (phase === 'config' || phase === 'active') {
+      feedbackRequested.current = false
+      sessionSaved.current = false
+    }
+  }, [phase])
+
+  // Timer expiry completes the round without calling endSimulation — still generate feedback
+  useEffect(() => {
+    if (phase === 'completed' && !feedbackRequested.current) requestFeedback()
+  }, [phase, requestFeedback])
+
+  // Persist the finished round so Court Record / Session Feedback show real history
+  useEffect(() => {
+    if (phase !== 'completed' || feedbackLoading || !feedbackRequested.current || sessionSaved.current) return
+    const counselEntries = transcript.filter(e => e.speaker === 'counsel')
+    if (counselEntries.length === 0) return
+    sessionSaved.current = true
+    const used = allocatedTime - timeRemaining
+    const fb = (sessionFeedback || {}) as Record<string, any>
+    const archetypeLabels = selectedArchetypes.map(id => BENCH_ARCHETYPES.find(a => a.id === id)?.label || id)
+    setSessions(prev => [{
+      id: `session-${Date.now()}`,
+      date: new Date().toISOString(),
+      issue: currentIssue ? `Issue ${currentIssue.number} — ${currentIssue.title}` : 'General',
+      side: selectedSide,
+      durationSeconds: used,
+      overallScore: sessionScore,
+      benchConfig: `${archetypeLabels.join(', ')} · Difficulty ${difficulty}`,
+      questions: counselEntries.length,
+      scores: fb.scores || null,
+      strengths: fb.strengths || [],
+      weaknesses: fb.weaknesses || [],
+      researchNeeded: fb.researchNeeded || [],
+      nextFocus: fb.nextFocus || '',
+      transcript: transcript.map(e => ({ speaker: e.speaker, text: e.text, score: e.score, timestamp: e.timestamp })),
+    }, ...prev])
+  }, [phase, feedbackLoading, sessionFeedback, transcript, allocatedTime, timeRemaining, currentIssue, selectedSide, sessionScore, difficulty, selectedArchetypes, setSessions])
 
   const seekExtension = () => {
     setExtensionMode(true)

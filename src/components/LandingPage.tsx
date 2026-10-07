@@ -13,12 +13,12 @@ export default function LandingPage({ onEnter }: { onEnter: () => void }) {
   }
 
   const features = [
-    { icon: Search, title: 'Legal Research', desc: 'Find and verify Indian authorities with Google Search grounding. Real sources, real citations.', color: '#5c64f4' },
-    { icon: BookOpen, title: 'Memorial Editor', desc: 'Draft, audit, and strengthen every argument. Compliance checked against your competition brochure.', color: '#d4a843' },
-    { icon: Mic, title: 'BenchSimulator', desc: 'Face difficult judicial questions before the real Bench does. 12 judge archetypes. Voice-enabled.', color: '#1a6b47' },
-    { icon: Scale, title: 'Citation Auditor', desc: 'Never rely on an unverified authority. Every citation checked, flagged, and risk-scored.', color: '#c0392b' },
-    { icon: Shield, title: 'Case Intelligence', desc: 'Turn your proposition into a structured legal strategy. Issues, facts, authorities — all mapped.', color: '#7c3aed' },
-    { icon: Calendar, title: 'Preparation Planner', desc: 'Know exactly what to prepare every day. Adaptive schedule from brochure to oral rounds.', color: '#b45309' },
+    { icon: Search, title: 'Legal Research', module: 'legal-research', desc: 'Find and verify Indian authorities with Google Search grounding. Real sources, real citations.', color: '#5c64f4' },
+    { icon: BookOpen, title: 'Memorial Editor', module: 'memorial', desc: 'Draft, audit, and strengthen every argument. Compliance checked against your competition brochure.', color: '#d4a843' },
+    { icon: Mic, title: 'BenchSimulator', module: 'bench-simulator', desc: 'Face difficult judicial questions before the real Bench does. 12 judge archetypes. Voice-enabled.', color: '#1a6b47' },
+    { icon: Scale, title: 'Citation Auditor', module: 'citation-auditor', desc: 'Never rely on an unverified authority. Every citation checked, flagged, and risk-scored.', color: '#c0392b' },
+    { icon: Shield, title: 'Case Intelligence', module: 'case-intelligence', desc: 'Turn your proposition into a structured legal strategy. Issues, facts, authorities — all mapped.', color: '#7c3aed' },
+    { icon: Calendar, title: 'Preparation Planner', module: 'planner', desc: 'Know exactly what to prepare every day. Adaptive schedule from brochure to oral rounds.', color: '#b45309' },
   ]
 
   return (
@@ -116,7 +116,11 @@ export default function LandingPage({ onEnter }: { onEnter: () => void }) {
           {features.map(f => {
             const Icon = f.icon
             return (
-              <div key={f.title} className="card-hover group">
+              <div
+                key={f.title}
+                onClick={() => { setActiveModule(f.module); onEnter() }}
+                className="card-hover group cursor-pointer"
+              >
                 <div className="flex items-center justify-center w-10 h-10 rounded-lg mb-4"
                   style={{ backgroundColor: `${f.color}15`, border: `1px solid ${f.color}30` }}>
                   <Icon className="w-5 h-5" style={{ color: f.color }} />
@@ -125,7 +129,7 @@ export default function LandingPage({ onEnter }: { onEnter: () => void }) {
                 <p className="text-sm text-charcoal-400 leading-relaxed">{f.desc}</p>
                 <div className="flex items-center gap-1 mt-4 text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity"
                   style={{ color: f.color }}>
-                  Explore <ArrowRight className="w-3.5 h-3.5" />
+                  Launch {f.title} <ArrowRight className="w-3.5 h-3.5" />
                 </div>
               </div>
             )

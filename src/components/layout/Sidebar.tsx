@@ -94,16 +94,19 @@ export default function Sidebar() {
 
       {/* Bottom info */}
       <div className="border-t border-[#1e2130] p-3">
-        <div className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-[#1e2130] cursor-pointer transition-colors">
-          <div className="w-7 h-7 rounded-full bg-navy-700 border border-navy-600 flex items-center justify-center">
-            <span className="text-xs font-semibold text-navy-200">AS</span>
+        <button
+          onClick={() => setActiveModule('settings')}
+          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-[#1e2130] cursor-pointer transition-colors text-left"
+        >
+          <div className="w-7 h-7 rounded-full bg-navy-700 border border-navy-600 flex items-center justify-center flex-shrink-0">
+            <span className="text-xs font-semibold text-navy-200">MC</span>
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-xs font-medium text-ivory-200 truncate">Arjun Singh</div>
+            <div className="text-xs font-medium text-ivory-200 truncate">Settings &amp; Profile</div>
             <div className="text-2xs text-charcoal-500">Student Counsel</div>
           </div>
-          <ChevronRight className="w-3 h-3 text-charcoal-600" />
-        </div>
+          <ChevronRight className="w-3 h-3 text-charcoal-600 flex-shrink-0" />
+        </button>
       </div>
     </aside>
   )
