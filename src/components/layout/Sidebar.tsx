@@ -69,7 +69,7 @@ export default function Sidebar() {
               {items.map(item => {
                 const Icon = item.icon
                 const isActive = activeModule === item.id
-                const hasAlert = alerts.some(a => a.module === item.id && !a.dismissible === false)
+                const hasAlert = alerts.some(a => a.module === item.id && a.dismissible === false)
                 return (
                   <button
                     key={item.id}

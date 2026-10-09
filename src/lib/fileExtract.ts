@@ -2,12 +2,15 @@
 // TXT  -> read directly in the browser
 // DOCX -> parsed in the browser with mammoth
 // PDF / images -> sent to /api/gemini (action: extractText) for text extraction / OCR
+//
+// Large PDFs (3–10 MB) are automatically chunked into 3 MB segments,
+// each extracted separately, then concatenated.
 
 import { extractTextFromBinary } from '@/lib/gemini'
 
 export const ACCEPT_ATTR = '.pdf,.docx,.txt,.png,.jpg,.jpeg,.webp'
-export const MAX_FILE_BYTES = 4 * 1024 * 1024 // Vercel request body limit is ~4.5MB (base64 adds ~33%)
-const MAX_BINARY_BYTES = 3 * 1024 * 1024
+export const MAX_FILE_BYTES = 10 * 1024 * 1024   // 10 MB hard cap shown to user
+const CHUNK_BYTES = 3 * 1024 * 1024              // send max 3 MB base64 per API call
 
 export type FileKind = 'PDF' | 'DOCX' | 'TXT' | 'IMAGE'
 
@@ -30,9 +33,24 @@ function toBase64(buffer: ArrayBuffer): string {
   return btoa(binary)
 }
 
+/** Split a base64 string into ~CHUNK_BYTES-worth-of-raw-bytes segments */
+function splitBase64Chunks(b64: string): string[] {
+  // Each raw byte becomes 4/3 base64 chars, so chunk size in chars:
+  const chunkChars = Math.ceil((CHUNK_BYTES / 3) * 4)
+  const chunks: string[] = []
+  for (let i = 0; i < b64.length; i += chunkChars) {
+    chunks.push(b64.slice(i, i + chunkChars))
+  }
+  return chunks
+}
+
 export async function extractFileText(file: File): Promise<{ kind: FileKind; text: string }> {
   const kind = detectKind(file)
   if (!kind) throw new Error(`Unsupported file type: ${file.name}. Use PDF, DOCX, TXT or an image.`)
+
+  if (file.size > MAX_FILE_BYTES) {
+    throw new Error(`${file.name} is too large (max 10 MB). Please compress or split the PDF.`)
+  }
 
   if (kind === 'TXT') return { kind, text: await file.text() }
 
@@ -42,11 +60,26 @@ export async function extractFileText(file: File): Promise<{ kind: FileKind; tex
     return { kind, text: value }
   }
 
-  if (file.size > MAX_BINARY_BYTES) {
-    throw new Error(`${file.name} is too large (max 3 MB for PDF and images).`)
-  }
+  // PDF or IMAGE — encode to base64 then send to Gemini
   const mimeType =
-    kind === 'PDF' ? 'application/pdf' : file.type || (file.name.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg')
-  const text = await extractTextFromBinary(mimeType, toBase64(await file.arrayBuffer()))
-  return { kind, text }
+    kind === 'PDF'
+      ? 'application/pdf'
+      : file.type || (file.name.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg')
+
+  const b64 = toBase64(await file.arrayBuffer())
+
+  // If the raw file fits in one chunk, send as-is
+  if (file.size <= CHUNK_BYTES) {
+    const text = await extractTextFromBinary(mimeType, b64)
+    return { kind, text }
+  }
+
+  // Large PDF: chunk and extract in sequence, then join
+  const chunks = splitBase64Chunks(b64)
+  const parts: string[] = []
+  for (let i = 0; i < chunks.length; i++) {
+    const chunkText = await extractTextFromBinary(mimeType, chunks[i])
+    parts.push(chunkText)
+  }
+  return { kind, text: parts.join('\n') }
 }

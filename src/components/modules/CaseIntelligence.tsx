@@ -22,6 +22,10 @@ export default function CaseIntelligence() {
     alleged: 'badge-amber', inferred: 'badge-blue', uncertain: 'badge-amber', irrelevant: 'badge-gray'
   }
 
+  // Collect all unique articles and statutes from the active case's issues
+  const allArticles = Array.from(new Set(activeCase.issues.flatMap(i => i.constitutionalArticles)))
+  const allStatutes = Array.from(new Set(activeCase.issues.flatMap(i => i.relevantStatutes)))
+
   return (
     <div className="max-w-5xl space-y-5">
       <div>
@@ -55,6 +59,11 @@ export default function CaseIntelligence() {
               ))}
             </div>
           </div>
+          {activeCase.facts.length === 0 && (
+            <div className="card text-center py-8 text-xs text-charcoal-500">
+              No facts loaded yet. Deconstruct your proposition to populate this ledger.
+            </div>
+          )}
           {activeCase.facts.map(fact => (
             <div key={fact.id} className="card hover:border-gold-600/30 transition-colors">
               <div className="flex items-start gap-3">
@@ -130,35 +139,41 @@ export default function CaseIntelligence() {
         </div>
       )}
 
-      {/* Laws */}
+      {/* Laws — reads from activeCase.issues */}
       {activeTab === 'laws' && (
         <div className="space-y-4">
           <div className="card">
             <h3 className="section-title text-sm mb-3">Constitutional Provisions</h3>
             <div className="space-y-2">
-              {['Article 32 — Right to Constitutional Remedies', 'Article 14 — Right to Equality', 'Article 19(1)(g) — Right to Practise any Profession', 'Article 21 — Protection of Life and Personal Liberty', 'Article 311 — Dismissal, Removal or Reduction in Rank', 'Article 19(6) — Reasonable Restrictions'].map(art => (
+              {allArticles.map(art => (
                 <div key={art} className="flex items-center gap-3 p-3 rounded-md bg-[#1a1c22] border border-[#2a2e40] hover:border-gold-600/30 cursor-pointer transition-colors">
                   <Scale className="w-4 h-4 text-gold-400 flex-shrink-0" />
                   <span className="text-sm text-ivory-200">{art}</span>
                 </div>
               ))}
+              {allArticles.length === 0 && (
+                <p className="text-xs text-charcoal-500">No constitutional provisions extracted yet. Deconstruct the proposition first.</p>
+              )}
             </div>
           </div>
           <div className="card">
-            <h3 className="section-title text-sm mb-3">Statutes & Rules</h3>
+            <h3 className="section-title text-sm mb-3">Statutes &amp; Rules</h3>
             <div className="space-y-2">
-              {['Administrative Tribunals Act, 1985', 'All India Services (Discipline and Appeal) Rules, 1969', 'Central Civil Services (Classification, Control and Appeal) Rules, 1965'].map(stat => (
+              {allStatutes.map(stat => (
                 <div key={stat} className="flex items-center gap-3 p-3 rounded-md bg-[#1a1c22] border border-[#2a2e40] hover:border-gold-600/30 cursor-pointer transition-colors">
                   <BookOpen className="w-4 h-4 text-blue-400 flex-shrink-0" />
                   <span className="text-sm text-ivory-200">{stat}</span>
                 </div>
               ))}
+              {allStatutes.length === 0 && (
+                <p className="text-xs text-charcoal-500">No statutes extracted yet.</p>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* Arguments */}
+      {/* Arguments — reads real positions from store */}
       {activeTab === 'arguments' && (
         <div className="grid grid-cols-2 gap-5">
           {(['petitioner', 'respondent'] as const).map(side => (
@@ -169,15 +184,23 @@ export default function CaseIntelligence() {
               {activeCase.issues.map(issue => (
                 <div key={issue.id} className="card">
                   <div className="text-xs font-semibold text-charcoal-400 mb-2">Issue {issue.number} — {issue.title}</div>
-                  <div className="space-y-1.5 text-xs text-ivory-300">
-                    {['Claim', 'Rule', 'Authority', 'Application', 'Conclusion'].map((step, i) => (
-                      <div key={step} className="flex items-start gap-2">
-                        <div className="w-16 flex-shrink-0 text-charcoal-500">{step}</div>
-                        <div className="flex-1 text-charcoal-400 italic">
-                          {i === 0 ? (side === 'petitioner' ? issue.petitionerPosition.substring(0, 60) + '…' : issue.respondentPosition.substring(0, 60) + '…') : '—'}
+                  <div className="space-y-2 text-xs text-ivory-300">
+                    <div className="flex items-start gap-2">
+                      <div className="w-20 flex-shrink-0 text-charcoal-500">Position</div>
+                      <div className="flex-1 leading-relaxed">
+                        {side === 'petitioner' ? issue.petitionerPosition : issue.respondentPosition}
+                      </div>
+                    </div>
+                    {(side === 'petitioner' ? issue.relevantStatutes : issue.constitutionalArticles).length > 0 && (
+                      <div className="flex items-start gap-2">
+                        <div className="w-20 flex-shrink-0 text-charcoal-500">Authority</div>
+                        <div className="flex flex-wrap gap-1">
+                          {(side === 'petitioner' ? issue.relevantStatutes : issue.constitutionalArticles).slice(0, 3).map(s => (
+                            <span key={s} className={`badge text-2xs ${side === 'petitioner' ? 'badge-blue' : 'badge-gold'}`}>{s}</span>
+                          ))}
                         </div>
                       </div>
-                    ))}
+                    )}
                   </div>
                 </div>
               ))}

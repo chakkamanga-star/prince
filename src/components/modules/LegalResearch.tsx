@@ -26,12 +26,14 @@ export default function LegalResearch() {
 
   // If global search query was submitted in header, run it automatically
   useEffect(() => {
-    if (globalSearchQuery && globalSearchQuery.trim()) {
-      setQuery(globalSearchQuery)
-      runSearch(globalSearchQuery)
-      setGlobalSearchQuery('')
-    }
+    if (!globalSearchQuery?.trim()) return
+    const q = globalSearchQuery
+    setQuery(q)
+    setGlobalSearchQuery('')
+    runSearch(q)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [globalSearchQuery])
+
 
   const runSearch = async (q: string) => {
     if (!q.trim()) return

@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { GoogleGenAI } from '@google/genai'
 
-export const maxDuration = 60
+export const maxDuration = 120
 
 const API_KEY = process.env.GEMINI_API_KEY || ''
 const genai = API_KEY ? new GoogleGenAI({ apiKey: API_KEY }) : null
 
 // Candidate models in order of priority
-const MODELS = ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-3.8-flash', 'gemini-3.5-flash']
+const MODELS = ['gemini-2.5-flash-preview-05-20', 'gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-pro']
 
 interface GenOptions {
   json?: boolean
@@ -125,7 +125,7 @@ Return JSON: {"status": "VERIFIED"|"PARTIALLY_VERIFIED"|"SOURCE_CONFLICT"|"MIS_C
         const { mimeType, data } = payload
         const { text } = await generate(
           'Extract ALL text from this document verbatim, preserving headings, numbering and paragraph structure. Output only the extracted text, with no commentary.',
-          { temperature: 0, maxTokens: 16000, parts: [{ inlineData: { mimeType, data } }] }
+          { temperature: 0, maxTokens: 32000, parts: [{ inlineData: { mimeType, data } }] }
         )
         return NextResponse.json({ text })
       }
@@ -249,7 +249,7 @@ Return JSON:
       case 'deconstructProposition': {
         const { text } = payload
         const prompt = `Deconstruct this moot court proposition text into structured JSON. Use only information present in the text; use "Not stated" or empty arrays where absent.
-${text?.substring(0, 40000)}
+${text?.substring(0, 80000)}
 
 Return JSON:
 {
@@ -280,7 +280,7 @@ Return JSON:
   "key_dates": [{"event": string, "date": string}],
   "maintainability_issues": string[]
 }`
-        return NextResponse.json(await callJson(prompt, 12000))
+        return NextResponse.json(await callJson(prompt, 16000))
       }
 
       case 'interpretStatute': {
