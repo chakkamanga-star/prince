@@ -12,8 +12,10 @@ const TEXT_MODELS = [
   'google/gemini-2.5-flash-lite',
 ]
 
-// Vision-capable model for multimodal (OCR / extractText)
-const VISION_MODEL = 'google/gemini-2.5-flash-image'
+// Vision-capable model for multimodal image INPUT (OCR / extractText)
+// Note: use the standard flash model — it supports image input natively.
+// Do NOT use *-image models (those are image generation/output models).
+const VISION_MODEL = 'google/gemini-2.5-flash'
 
 interface GenOptions {
   json?: boolean
