@@ -2,36 +2,104 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export const maxDuration = 120
 
-const API_KEY = process.env.OPENROUTER_API_KEY || ''
+// ─── Provider Configuration ────────────────────────────────────────────────────
+// Priority 1: Gemini Direct (free, vision+text, 1M context, 65K output)
+// Priority 2: Groq (free, text-only, 32K context, ultra-fast)
+// Priority 3: OpenRouter (credit-based, last resort)
+
+const GEMINI_KEY = process.env.GEMINI_API_KEY || ''
+const GROQ_KEY = process.env.GROQ_API_KEY || ''
+const OR_KEY = process.env.OPENROUTER_API_KEY || ''
+
+const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/openai'
+const GROQ_BASE = 'https://api.groq.com/openai/v1'
 const OR_BASE = 'https://openrouter.ai/api/v1'
 
-// Models in priority order (all available on OpenRouter)
-const TEXT_MODELS = [
-  'google/gemini-3.8-flash',
-  'google/gemini-2.5-flash',
-  'google/gemini-2.5-flash-lite',
+// Gemini models (free tier) — ordered by preference
+const GEMINI_MODELS = [
+  'gemini-3.6-flash',      // Latest stable
+  'gemini-3.5-flash',      // Reliable fallback
+  'gemini-3.5-flash-lite', // Lightweight fallback
 ]
 
-// Vision-capable model for multimodal image INPUT (OCR / extractText)
-// Note: use the standard flash model — it supports image input natively.
-// Do NOT use *-image models (those are image generation/output models).
-const VISION_MODEL = 'google/gemini-2.5-flash'
+// Groq models (free tier, text-only)
+const GROQ_MODELS = [
+  'qwen/qwen3.8-27b',     // Best available on Groq free tier
+  'openai/gpt-oss-20b',   // Backup
+]
+
+// OpenRouter models (credit-based, last resort)
+const OR_MODELS = [
+  'google/gemini-3.8-flash',
+  'google/gemini-2.5-flash',
+]
+
+// ─── Provider Types ─────────────────────────────────────────────────────────────
+
+interface Provider {
+  name: string
+  baseUrl: string
+  apiKey: string
+  models: string[]
+  extraHeaders?: Record<string, string>
+  supportsVision: boolean
+}
+
+function getProviders(): Provider[] {
+  const providers: Provider[] = []
+
+  if (GEMINI_KEY) {
+    providers.push({
+      name: 'Gemini',
+      baseUrl: GEMINI_BASE,
+      apiKey: GEMINI_KEY,
+      models: GEMINI_MODELS,
+      supportsVision: true,
+    })
+  }
+
+  if (GROQ_KEY) {
+    providers.push({
+      name: 'Groq',
+      baseUrl: GROQ_BASE,
+      apiKey: GROQ_KEY,
+      models: GROQ_MODELS,
+      supportsVision: false,
+    })
+  }
+
+  if (OR_KEY) {
+    providers.push({
+      name: 'OpenRouter',
+      baseUrl: OR_BASE,
+      apiKey: OR_KEY,
+      models: OR_MODELS,
+      extraHeaders: {
+        'HTTP-Referer': 'https://localhost',
+        'X-Title': 'MootCourt App',
+      },
+      supportsVision: true,
+    })
+  }
+
+  return providers
+}
+
+// ─── Core Chat Function ─────────────────────────────────────────────────────────
 
 interface GenOptions {
   json?: boolean
   maxTokens?: number
   temperature?: number
-  /** base64 image/PDF parts: { mimeType, data } */
   imageParts?: Array<{ mimeType: string; data: string }>
 }
 
-async function orChat(
-  messages: Array<{ role: string; content: any }>,
+async function chatWithProvider(
+  provider: Provider,
   model: string,
+  messages: Array<{ role: string; content: any }>,
   opts: GenOptions = {}
 ): Promise<string> {
-  if (!API_KEY) throw new Error('OpenRouter API key not configured. Set OPENROUTER_API_KEY in your environment variables.')
-
   const body: any = {
     model,
     messages,
@@ -42,36 +110,52 @@ async function orChat(
     body.response_format = { type: 'json_object' }
   }
 
-  const res = await fetch(`${OR_BASE}/chat/completions`, {
+  const headers: Record<string, string> = {
+    'Authorization': `Bearer ${provider.apiKey}`,
+    'Content-Type': 'application/json',
+    ...(provider.extraHeaders || {}),
+  }
+
+  const res = await fetch(`${provider.baseUrl}/chat/completions`, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${API_KEY}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://localhost',
-      'X-Title': 'MootCourt App',
-    },
+    headers,
     body: JSON.stringify(body),
   })
 
   if (!res.ok) {
     const err = await res.text()
-    throw new Error(`OpenRouter error ${res.status}: ${err}`)
+    throw new Error(`${provider.name} error ${res.status}: ${err}`)
   }
 
   const data = await res.json()
   const text = data.choices?.[0]?.message?.content
-  if (!text) throw new Error('Empty response from OpenRouter')
+  if (!text) throw new Error(`Empty response from ${provider.name}`)
   return text
 }
 
-/** Plain text generation with model fallback */
-async function generate(prompt: string, opts: GenOptions = {}): Promise<{ text: string; sources: any[] }> {
-  let userContent: any
+// ─── Multi-Provider Generate with Auto-Fallback ─────────────────────────────────
 
-  if (opts.imageParts?.length) {
-    // Multimodal: build content array with image_url parts (OpenAI vision format)
+async function generate(
+  prompt: string,
+  opts: GenOptions = {}
+): Promise<{ text: string; sources: any[]; provider: string }> {
+  const needsVision = !!(opts.imageParts?.length)
+  const allProviders = getProviders()
+
+  // Filter to vision-capable providers if needed
+  const providers = needsVision
+    ? allProviders.filter(p => p.supportsVision)
+    : allProviders
+
+  if (providers.length === 0) {
+    throw new Error('No API keys configured. Set GEMINI_API_KEY, GROQ_API_KEY, or OPENROUTER_API_KEY.')
+  }
+
+  // Build message content
+  let userContent: any
+  if (needsVision) {
     userContent = [
-      ...opts.imageParts.map(p => ({
+      ...opts.imageParts!.map(p => ({
         type: 'image_url',
         image_url: { url: `data:${p.mimeType};base64,${p.data}` },
       })),
@@ -82,33 +166,43 @@ async function generate(prompt: string, opts: GenOptions = {}): Promise<{ text: 
   }
 
   const messages = [{ role: 'user', content: userContent }]
-  const models = opts.imageParts?.length ? [VISION_MODEL] : TEXT_MODELS
 
+  // Try each provider and its models in order
   let lastError: any = null
-  for (const model of models) {
-    try {
-      const text = await orChat(messages, model, opts)
-      return { text, sources: [] }
-    } catch (err) {
-      lastError = err
+  for (const provider of providers) {
+    for (const model of provider.models) {
+      try {
+        const text = await chatWithProvider(provider, model, messages, opts)
+        return { text, sources: [], provider: `${provider.name}/${model}` }
+      } catch (err: any) {
+        lastError = err
+        console.warn(`[LLM] ${provider.name}/${model} failed: ${err.message?.substring(0, 150)}`)
+        // Continue to next model/provider
+      }
     }
   }
-  throw lastError || new Error('Failed to generate with all available models')
+
+  throw lastError || new Error('All providers failed')
 }
+
+// ─── Helper Functions ───────────────────────────────────────────────────────────
 
 async function callText(prompt: string): Promise<string> {
   return (await generate(prompt)).text
 }
 
-async function callJson(prompt: string, maxTokens = 6000): Promise<any> {
+async function callJson(prompt: string, maxTokens = 8000): Promise<any> {
   const { text } = await generate(prompt, { json: true, maxTokens })
   try {
     return JSON.parse(text)
   } catch {
+    // Strip markdown fences if present (Groq sometimes wraps in ```)
     const cleaned = text.replace(/^```(?:json)?/im, '').replace(/```$/m, '').trim()
     return JSON.parse(cleaned)
   }
 }
+
+// ─── API Route Handler ─────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
   try {
@@ -117,7 +211,16 @@ export async function POST(req: NextRequest) {
 
     switch (action) {
       case 'health': {
-        return NextResponse.json({ gemini: !!API_KEY })
+        return NextResponse.json({
+          gemini: !!GEMINI_KEY,
+          groq: !!GROQ_KEY,
+          openrouter: !!OR_KEY,
+          providers: [
+            GEMINI_KEY ? 'Gemini Direct (free)' : null,
+            GROQ_KEY ? 'Groq (free)' : null,
+            OR_KEY ? 'OpenRouter (credits)' : null,
+          ].filter(Boolean),
+        })
       }
 
       case 'analyzeMaintainability': {
@@ -164,7 +267,7 @@ Return JSON: {"status": "VERIFIED"|"PARTIALLY_VERIFIED"|"SOURCE_CONFLICT"|"MIS_C
       }
 
       case 'extractText': {
-        // Extract text from a PDF or image (OCR) using vision model
+        // Extract text from a PDF or image (OCR) — requires vision (Gemini only)
         const { mimeType, data } = payload
         const { text } = await generate(
           'Extract ALL text from this document verbatim, preserving headings, numbering and paragraph structure. Output only the extracted text, with no commentary.',
@@ -217,7 +320,7 @@ Previous Questions: ${(previousQuestions || []).slice(-3).join('; ')}
 Generate ONE incisive, direct judicial question in formal Indian courtroom register (e.g. "Counsel, ...").
 Do NOT include explanations. Just return the judge's spoken question.`
         const text = await callText(prompt)
-        return NextResponse.json({ question: text.replace(/^\"|\"$/g, '').trim() })
+        return NextResponse.json({ question: text.replace(/^\"|\\"$/g, '').trim() })
       }
 
       case 'scoreCounselAnswer': {
