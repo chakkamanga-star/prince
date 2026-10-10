@@ -1,68 +1,109 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { GoogleGenAI } from '@google/genai'
 
 export const maxDuration = 120
 
-const API_KEY = process.env.GEMINI_API_KEY || ''
-const genai = API_KEY ? new GoogleGenAI({ apiKey: API_KEY }) : null
+const API_KEY = process.env.OPENROUTER_API_KEY || ''
+const OR_BASE = 'https://openrouter.ai/api/v1'
 
-// Candidate models in order of priority
-const MODELS = ['gemini-2.5-flash-preview-05-20', 'gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-pro']
+// Models in priority order (all available on OpenRouter)
+const TEXT_MODELS = [
+  'google/gemini-3.8-flash',
+  'google/gemini-2.5-flash',
+  'google/gemini-2.5-flash-lite',
+]
+
+// Vision-capable model for multimodal (OCR / extractText)
+const VISION_MODEL = 'google/gemini-2.5-flash-image'
 
 interface GenOptions {
   json?: boolean
-  search?: boolean
   maxTokens?: number
   temperature?: number
-  parts?: any[]
+  /** base64 image/PDF parts: { mimeType, data } */
+  imageParts?: Array<{ mimeType: string; data: string }>
 }
 
-async function generate(prompt: string, opts: GenOptions = {}) {
-  if (!genai) throw new Error('Gemini API key not configured. Set GEMINI_API_KEY in your environment variables.')
+async function orChat(
+  messages: Array<{ role: string; content: any }>,
+  model: string,
+  opts: GenOptions = {}
+): Promise<string> {
+  if (!API_KEY) throw new Error('OpenRouter API key not configured. Set OPENROUTER_API_KEY in your environment variables.')
+
+  const body: any = {
+    model,
+    messages,
+    temperature: opts.temperature ?? 0.3,
+    max_tokens: opts.maxTokens ?? 8000,
+  }
+  if (opts.json) {
+    body.response_format = { type: 'json_object' }
+  }
+
+  const res = await fetch(`${OR_BASE}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${API_KEY}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://localhost',
+      'X-Title': 'MootCourt App',
+    },
+    body: JSON.stringify(body),
+  })
+
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(`OpenRouter error ${res.status}: ${err}`)
+  }
+
+  const data = await res.json()
+  const text = data.choices?.[0]?.message?.content
+  if (!text) throw new Error('Empty response from OpenRouter')
+  return text
+}
+
+/** Plain text generation with model fallback */
+async function generate(prompt: string, opts: GenOptions = {}): Promise<{ text: string; sources: any[] }> {
+  let userContent: any
+
+  if (opts.imageParts?.length) {
+    // Multimodal: build content array with image_url parts (OpenAI vision format)
+    userContent = [
+      ...opts.imageParts.map(p => ({
+        type: 'image_url',
+        image_url: { url: `data:${p.mimeType};base64,${p.data}` },
+      })),
+      { type: 'text', text: prompt },
+    ]
+  } else {
+    userContent = prompt
+  }
+
+  const messages = [{ role: 'user', content: userContent }]
+  const models = opts.imageParts?.length ? [VISION_MODEL] : TEXT_MODELS
 
   let lastError: any = null
-  for (const model of MODELS) {
+  for (const model of models) {
     try {
-      const config: any = {
-        temperature: opts.temperature ?? 0.3,
-        maxOutputTokens: opts.maxTokens ?? 8000,
-      }
-      if (opts.json) config.responseMimeType = 'application/json'
-      if (opts.search) config.tools = [{ googleSearch: {} }]
-
-      const response = await genai.models.generateContent({
-        model,
-        contents: [{ role: 'user', parts: [...(opts.parts || []), { text: prompt }] }],
-        config,
-      })
-
-      if (response?.text) {
-        const chunks = (response as any).candidates?.[0]?.groundingMetadata?.groundingChunks || []
-        const sources = chunks
-          .map((c: any) => c.web)
-          .filter((w: any) => w?.uri)
-          .map((w: any) => ({ uri: w.uri as string, title: (w.title || w.uri) as string }))
-        return { text: response.text, sources }
-      }
-    } catch (err: any) {
+      const text = await orChat(messages, model, opts)
+      return { text, sources: [] }
+    } catch (err) {
       lastError = err
-      continue
     }
   }
   throw lastError || new Error('Failed to generate with all available models')
 }
 
-async function callGemini(prompt: string, jsonMode = false) {
-  return (await generate(prompt, { json: jsonMode })).text
+async function callText(prompt: string): Promise<string> {
+  return (await generate(prompt)).text
 }
 
-async function callJson(prompt: string, maxTokens = 8000) {
+async function callJson(prompt: string, maxTokens = 8000): Promise<any> {
   const { text } = await generate(prompt, { json: true, maxTokens })
   try {
     return JSON.parse(text)
   } catch {
-    // Strip accidental markdown fences and retry
-    const cleaned = text.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim()
+    const cleaned = text.replace(/^```(?:json)?/im, '').replace(/```$/m, '').trim()
     return JSON.parse(cleaned)
   }
 }
@@ -74,7 +115,7 @@ export async function POST(req: NextRequest) {
 
     switch (action) {
       case 'health': {
-        return NextResponse.json({ gemini: !!genai })
+        return NextResponse.json({ gemini: !!API_KEY })
       }
 
       case 'analyzeMaintainability': {
@@ -121,11 +162,11 @@ Return JSON: {"status": "VERIFIED"|"PARTIALLY_VERIFIED"|"SOURCE_CONFLICT"|"MIS_C
       }
 
       case 'extractText': {
-        // Extract text from a PDF or image (OCR) using Gemini's multimodal input
+        // Extract text from a PDF or image (OCR) using vision model
         const { mimeType, data } = payload
         const { text } = await generate(
           'Extract ALL text from this document verbatim, preserving headings, numbering and paragraph structure. Output only the extracted text, with no commentary.',
-          { temperature: 0, maxTokens: 32000, parts: [{ inlineData: { mimeType, data } }] }
+          { temperature: 0, maxTokens: 32000, imageParts: [{ mimeType, data }] }
         )
         return NextResponse.json({ text })
       }
@@ -158,13 +199,7 @@ Structure your response into:
 
 Never hallucinate fake citations. If an authority is persuasive only, explicitly label it. Maintain formal Indian judicial register.`
 
-        let result
-        try {
-          // Prefer Google Search grounding so sources are real
-          result = await generate(prompt, { search: true, maxTokens: 8000 })
-        } catch {
-          result = await generate(prompt, { maxTokens: 8000 })
-        }
+        const result = await generate(prompt, { maxTokens: 8000 })
         return NextResponse.json({ text: result.text, sources: result.sources })
       }
 
@@ -179,8 +214,8 @@ Previous Questions: ${(previousQuestions || []).slice(-3).join('; ')}
 
 Generate ONE incisive, direct judicial question in formal Indian courtroom register (e.g. "Counsel, ...").
 Do NOT include explanations. Just return the judge's spoken question.`
-        const text = await callGemini(prompt)
-        return NextResponse.json({ question: text.replace(/^"|"$/g, '').trim() })
+        const text = await callText(prompt)
+        return NextResponse.json({ question: text.replace(/^\"|\"$/g, '').trim() })
       }
 
       case 'scoreCounselAnswer': {
