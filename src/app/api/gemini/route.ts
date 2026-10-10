@@ -100,7 +100,7 @@ async function callText(prompt: string): Promise<string> {
   return (await generate(prompt)).text
 }
 
-async function callJson(prompt: string, maxTokens = 8000): Promise<any> {
+async function callJson(prompt: string, maxTokens = 6000): Promise<any> {
   const { text } = await generate(prompt, { json: true, maxTokens })
   try {
     return JSON.parse(text)
@@ -168,7 +168,7 @@ Return JSON: {"status": "VERIFIED"|"PARTIALLY_VERIFIED"|"SOURCE_CONFLICT"|"MIS_C
         const { mimeType, data } = payload
         const { text } = await generate(
           'Extract ALL text from this document verbatim, preserving headings, numbering and paragraph structure. Output only the extracted text, with no commentary.',
-          { temperature: 0, maxTokens: 32000, imageParts: [{ mimeType, data }] }
+          { temperature: 0, maxTokens: 12000, imageParts: [{ mimeType, data }] }
         )
         return NextResponse.json({ text })
       }
@@ -317,7 +317,7 @@ Return JSON:
   "key_dates": [{"event": string, "date": string}],
   "maintainability_issues": string[]
 }`
-        return NextResponse.json(await callJson(prompt, 16000))
+        return NextResponse.json(await callJson(prompt, 10000))
       }
 
       case 'interpretStatute': {
@@ -360,7 +360,7 @@ Return JSON with:
   "milestones": [{"title": string, "date_offset": number, "description": string}],
   "daily_drills": [{"type": string, "title": string, "prompt": string}]
 }`
-        return NextResponse.json(await callJson(prompt, 12000))
+        return NextResponse.json(await callJson(prompt, 8000))
       }
 
       case 'checkFactConsistency': {
